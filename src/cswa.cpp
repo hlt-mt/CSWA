@@ -1,7 +1,7 @@
 /******************************************************************************
  IrstLM: IRST Language Model Toolkit, compile LM
+
  Copyright (C) 2006 Marcello Federico, ITC-irst Trento, Italy
- 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
  License as published by the Free Software Foundation; either
@@ -18,7 +18,6 @@
  
  ******************************************************************************/
 
-
 #include <iostream>
 #include "cmd.h"
 #include <pthread.h>
@@ -28,8 +27,6 @@
 #include "mempool.h"
 #include "htable.h"
 #include "dictionary.h"
-#include "n_gram.h"
-#include "ngramtable.h"
 #include "doc.h"
 #include "cswam.h"
 

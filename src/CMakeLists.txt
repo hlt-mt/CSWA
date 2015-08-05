@@ -32,6 +32,7 @@ SET( LIB_CSWA_SRC
         mfstream.h mfstream.cpp 
         gzfilebuf.h index.h
         htable.h htable.cpp 
+        n_gram.h n_gram.cpp
         dictionary.h dictionary.cpp
         doc.h doc.cpp
         crc.h crc.cpp 

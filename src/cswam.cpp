@@ -30,10 +30,8 @@
 #include "mfstream.h"
 #include "mempool.h"
 #include "htable.h"
-#include "n_gram.h"
 #include "util.h"
 #include "dictionary.h"
-#include "ngramtable.h"
 #include "doc.h"
 #include <algorithm>
 #include <vector>
@@ -1372,114 +1370,117 @@ void cswam::M1_clearcounts(bool clearmem){
 }
 
 
-void cswam::findfriends(FriendList* friends){
-           
-    //allocate the global prob table
-    prob= new src_map[trgdict->size()];
-    
-    //allocate thread safe structures
-    M1_clearcounts(false);
-    
-    //prepare thread pool
-    threadpool thpool=thpool_init(threads);
-    task *t=new task[trgdict->size()>threads?trgdict->size():threads];
-    
-    float minprob=0.01;
-    
-    cerr << "initializing M1\n";
-    for (int s=0;s<srcdata->numdoc();s++){
-        int trglen=trgdata->doclen(s); // length of target sentence
-        int srclen=srcdata->doclen(s); //length of source sentence
+    void cswam::findfriends(FriendList* friends){
         
-        int frac=(s * 1000)/srcdata->numdoc();
-        if (!(frac % 10)) fprintf(stderr,"%02d\b\b",frac/10);
+        //allocate the global prob table
+        prob= new src_map[trgdict->size()];
         
-        for (int j=0;j<srclen;j++){
-            int f=srcdata->docword(s,j);
-            if (srcdict->freq(f)>=minfreq){
-                for (int i=0;i<trglen;i++){
-                    int e=trgdata->docword(s,i);
-                    if (trgdict->freq(e)>=minfreq && (i==0 || abs(i-j-1) <= distortion_window))
-                        prob[e][f]=1;
+        //allocate thread safe structures
+        M1_clearcounts(false);
+        
+        //prepare thread pool: use public variable threads
+        threadpool thpool=thpool_init(threads);
+        task *t=new task[trgdict->size()>threads?trgdict->size():threads];
+        
+        float minprob=0.01;
+        
+        cerr << "initializing M1\n";
+        for (int s=0;s<srcdata->numdoc();s++){
+            int trglen=trgdata->doclen(s); // length of target sentence
+            int srclen=srcdata->doclen(s); //length of source sentence
+            
+            ShowProgress(s,srcdata->numdoc());
+            
+            for (int j=0;j<srclen;j++){
+                int f=srcdata->docword(s,j);
+                if (srcdict->freq(f)>=minfreq){
+                    for (int i=0;i<trglen;i++){
+                        int e=trgdata->docword(s,i);
+                        if (trgdict->freq(e)>=minfreq && (i==0 || abs(i-j-1) <= distortion_window))
+                            prob[e][f]=1;
+                    }
                 }
             }
         }
-    }
-    
-    cerr << "training M1\n";
-    for (int it=0;it<M1iter;it++){
         
-        cerr << "it: " << it+1;
-        M1_clearcounts(false);
-        
-        //compute expected counts
-        for (long long s=0;s<srcdata->numdoc();s++){
+        cerr << "training M1\n";
+        for (int it=0;it<M1iter;it++){
             
-            t[s % threads].ctx=this; t[s % threads].argv=(void *)s;
-            thpool_add_work(thpool, &cswam::M1_ecounts_helper,(void *)&t[s % threads]);
+            cerr << "it: " << it+1;
+            M1_clearcounts(false);
             
-            if (((s % threads) == (threads-1)) || (s==(srcdata->numdoc()-1)))
-                thpool_wait(thpool);//join all threads
-        }
-        
-        //update the global counts
-        for (long long e = 0; e < trgdict->size(); e++){
+            //compute expected counts
+            for (long long s=0;s<srcdata->numdoc();s++){
+                
+                t[s % threads].ctx=this; t[s % threads].argv=(void *)s;
+                thpool_add_work(thpool, &cswam::M1_ecounts_helper,(void *)&t[s % threads]);
+                
+                if (((s % threads) == (threads-1)) || (s==(srcdata->numdoc()-1)))
+                    thpool_wait(thpool);//join all threads
+            }
+            
+            //update the global counts
+            for (long long e = 0; e < trgdict->size(); e++){
                 t[e].ctx=this; t[e].argv=(void *)e;
                 thpool_add_work(thpool, &cswam::M1_collect_helper,(void *)&t[e]);
-        }
-        thpool_wait(thpool);//join all threads
-        
-        //update probabilities
-        for (long long e = 0; e < trgdict->size(); e++){
-            t[e].ctx=this; t[e].argv=(void *)e;
-            thpool_add_work(thpool, &cswam::M1_update_helper,(void *)&t[e]);
-        }
-        
-        thpool_wait(thpool); //join all threads
-    }
-    
-    cerr << "computing candidates\n";
-    Friend f;FriendList fv;
-    
-    for (int e = 0; e < trgdict->size(); e++){
-        
-        ShowProgress(e,trgdict->size());
-     
-        fv.clear();
-        //save in a vector and compute entropy
-        float H=0;
-//        for (auto jtr = prob[e].begin(); jtr !=  prob[e].end();jtr++){
-        for (src_map::iterator jtr = prob[e].begin(); jtr !=  prob[e].end();jtr++){
-            f.word=(*jtr).first; f.score=(*jtr).second;
-            assert(f.score>=0 && f.score<=1);
-            if (f.score>0)
-                H-=f.score * logf(f.score);
-            cout << "f.score: " << f.score << " minprob: " << minprob << "\n";
-            if (f.score >= minprob)  //never include options with prob < minprob
-                fv.push_back(f);
+            }
+            thpool_wait(thpool);//join all threads
+            
+            //update probabilities
+            for (long long e = 0; e < trgdict->size(); e++){
+                t[e].ctx=this; t[e].argv=(void *)e;
+                thpool_add_work(thpool, &cswam::M1_update_helper,(void *)&t[e]);
+            }
+            
+            thpool_wait(thpool); //join all threads
         }
         
-        std::sort(fv.begin(),fv.end(),myrank);
-        int PP=round(expf(H)); //compute perplexity
+        cerr << "computing candidates\n";
+        Friend f;FriendList fv;
+        
+        for (int e = 0; e < trgdict->size(); e++){
+            
+            ShowProgress(e,trgdict->size());
+ 
+            cout << trgdict->decode(e) << " " << prob[e].size() << "\n";
+            
+            fv.clear();
+            //save in a vector and compute entropy
+            float H=0;
+            //        for (auto jtr = prob[e].begin(); jtr !=  prob[e].end();jtr++){
+            for (src_map::iterator jtr = prob[e].begin(); jtr !=  prob[e].end();jtr++){
+                f.word=(*jtr).first; f.score=(*jtr).second;
+                assert(f.score>=0 && f.score<=1);
+                if (f.score>0)
+                    H-=f.score * logf(f.score);
+                
+                if (f.score >= minprob)  //never include options with prob < minprob
+                    fv.push_back(f);
+            }
+            
+            std::sort(fv.begin(),fv.end(),myrank);
+            int PP=round(expf(H)); //compute perplexity
+            
+            if (fv.size()>0)
+                cout << trgdict->decode(e) << " # friends: " << fv.size() << " PP " << PP << endl;
 
-        cout << trgdict->decode(e) << " # friends: " << fv.size() << " PP " << PP << endl;
-               int count=0;
-//        for (auto jtr = fv.begin(); jtr !=  fv.end();jtr++){
-        for (FriendList::iterator jtr = fv.begin(); jtr !=  fv.end();jtr++){
-            friends[e].push_back(*jtr);
-            //if (verbosity)
-            cout << trgdict->decode(e) << " " << srcdict->decode((*jtr).word) << " " << (*jtr).score << endl;
-            if (++count >= PP) break;
+            int count=0;
+            //        for (auto jtr = fv.begin(); jtr !=  fv.end();jtr++){
+            for (FriendList::iterator jtr = fv.begin(); jtr !=  fv.end();jtr++){
+                friends[e].push_back(*jtr);
+                //if (verbosity)
+                cout << trgdict->decode(e) << " " << srcdict->decode((*jtr).word) << " " << (*jtr).score << endl;
+                if (++count >= PP) break;
+            }
         }
+        
+        //destroy thread pool
+        thpool_destroy(thpool); delete [] t;
+        
+        M1_clearcounts(true);
+        
+        delete [] prob;
     }
-    
-    //destroy thread pool
-    thpool_destroy(thpool); delete [] t;
-    
-    M1_clearcounts(true);
-    
-    delete [] prob;
-}
 
 } //namespace irstlm
 
